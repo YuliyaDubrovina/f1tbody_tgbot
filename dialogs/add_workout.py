@@ -12,6 +12,7 @@ from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from fsm_states import AddWorkoutStates
+from models import Client, Workout, Exercise
 
 # Создаем маршрутизатор
 router = Router()
@@ -22,36 +23,13 @@ router = Router()
 #     сlient = session.query(Client).filter(Client.name == client_name).first()
 #     return bool(client)
 
-def generate_workouts_result_msg(data):
-    workouts = data["workouts"]
-    result = "Вы добавили следующие тренировки:\n"
-    result += f"👨🏼 Имя клиента: {data["client_name"]}\n"
-    result += f"Количество тренировок: {data["workouts_count"]}\n"
-    for i, workout in enumerate(workouts):
-        result += f"🏆 Тренировка {i + 1}\n"
-        result += f"Описание: {workout["description"]}\n"
-        result += f"Количество упражнений: {workout["exercises_count"]}\n"
-        for j, exercise in enumerate(workout["exercises"]):
-            result += f"🎗 Упражнение {j + 1}:\n"
-            result += f"Название: {exercise["name"]}\n"
-            result += f"Описание: {exercise["description"]}\n"
-            result += f"Количество подходов: {exercise["repetitions"]}\n"
-            result += f"Вес: {int(exercise["weight"])} кг\n"
-
+def generate_workouts_result_msg(data: Client):
+    result = f"Вы добавили следующие тренировки:\n👨🏼 Имя клиента: {data.client_name}\nКоличество тренировок: {data.workouts_count}\n"
+    for i, workout in enumerate(data.workouts):
+        result += f"🏆 Тренировка {i + 1}\nОписание: {workout.description}\nКоличество упражнений: {len(workout.exercises)}\n"
+        for j, exercise in enumerate(workout.exercises):
+            result += f"🎗 Упражнение {j + 1}:\nНазвание: {exercise.name}\nОписание: {exercise.description}\nКоличество подходов: {exercise.repetitions}\nВес: {exercise.weight} кг\n"
     return result
-
-
-def is_valid_name(name: str) -> bool:
-    """
-    Проверяет валидность имени клиента
-    - Состоит из букв, пробелов, дефисов (латиница и кириллица)
-    - Не пустое
-    - Нет лишних символов
-
-    :param name: Имя клиента
-    :return: bool
-    """
-    return bool(re.match(r"^[A-Za-zА-Яа-яЁё\s-]+$", name.strip()))
 
 
 @router.message(Command("add_workouts"))
@@ -71,15 +49,15 @@ async def set_client_name(message: types.Message, state: FSMContext):
     Получение имени клиента
     """
     client_name = message.text.strip()
-
-    # Проверяем корректность имени
-    if not is_valid_name(client_name):
-        await message.answer("Имя клиента может состоять только из букв, пробелов, дефисов")
+    try:
+        client_data = Client(client_name=client_name, workouts_count=0)
+    except ValueError as e:
+        await message.answer(str(e))
         return
 
     # TODO Добавить проверку существования клиента в базе данных
 
-    await state.update_data(client_name=client_name)
+    await state.update_data(client_data=dict(client_data)) #TODO Проверить, нужно ли действительно приводить к словарю
     await message.answer("Сколько тренировок добавить?")
     await state.set_state(AddWorkoutStates.workouts_count)
 
