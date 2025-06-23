@@ -3,7 +3,8 @@
 """
 import asyncio
 
-from aiogram import Bot, Dispatcher
+from aiogram.client.bot import Bot
+from aiogram.dispatcher.dispatcher import Dispatcher
 from aiogram_sqlite_storage.sqlitestore import SQLStorage
 
 from commands import ADMIN_COMMANDS
