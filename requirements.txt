@@ -1,0 +1,3 @@
+aiogram
+aiogram-sqlite-storage
+pydantic
