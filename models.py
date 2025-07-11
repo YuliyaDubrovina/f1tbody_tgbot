@@ -1,56 +1,61 @@
-import re
 from typing import List
-from pydantic import BaseModel, validator, ValidationError
+from pydantic import BaseModel, Field
 
 class Exercise(BaseModel):
-    name: str
-    description: str
-    repetitions: int
-    weight: int
+    name: str = Field(..., min_length=1, max_length=100, description="Название упражнения")
+    description: str = Field(..., min_length=1, max_length=500, description="Описание упражнения и техники выполнения")
+    repetitions: int = Field(..., ge=1, le=999, description="Количество повторений в упражнении")
+    weight: int = Field(..., ge=0, le=1000, description="Вес в упражнении (в кг)")
 
-    @validator('name', 'description')
-    def validate_strings(cls, value):
-        if not value.strip():
-            raise ValueError('Поле не может быть пустым')
-        return value
-
-    @validator('repetitions')
-    def validate_repetitions(cls, value):
-        if value < 1:
-            raise ValueError('Количество повторений должно быть больше 0')
-        return value
-
-    @validator('weight')
-    def validate_weight(cls, value):
-        if value < 1:
-            raise ValueError('Вес должен быть больше 0')
-        return value
+    model_config = {
+        "str_strip_whitespace": True,
+        "validate_assignment": True
+    }
 
 class Workout(BaseModel):
-    description: str
-    exercises: List[Exercise] = []
+    description: str = Field(..., min_length=1, max_length=300, description="Описание тренировки")
+    exercises: List[Exercise] = Field(default_factory=list, description="Список упражнений")
 
-    @validator('description')
-    def validate_description(cls, value):
-        if not value.strip():
-            raise ValueError('Описание тренировки не может быть пустым')
-        return value
+    model_config = {
+        "str_strip_whitespace": True,
+        "validate_assignment": True
+    }
 
 class Client(BaseModel):
-    client_name: str
-    workouts_count: int
-    workouts: List[Workout] = []
+    client_name: str = Field(..., min_length=1, max_length=100, description="Имя клиента")
+    workouts_count: int = Field(..., ge=1, le=100, description="Количество тренировок")
+    workouts: List[Workout] = Field(default_factory=list, description="Список тренировок")
 
-    @validator('client_name')
-    def validate_client_name(cls, value):
-        if not value.strip():
-            raise ValueError('Имя клиента не может быть пустым')
-        if not re.match(r'^[A-Za-zА-Яа-яЁё\s\-]+$', value):
-            raise ValueError('Имя клиента может состоять только из букв, пробелов и дефисов')
-        return value
-
-    @validator('workouts_count')
-    def validate_workouts_count(cls, value):
-        if value < 1:
-            raise ValueError('Количество тренировок должно быть больше 0')
-        return value
+    model_config = {
+        "str_strip_whitespace": True,
+        "validate_assignment": True
+    }
+    
+    def generate_summary(self) -> str:
+        """Генерирует краткий отчет о тренировках клиента"""
+        lines = [
+            "✅ Добавлены тренировки:",
+            "",
+            f"👤 Клиент: {self.client_name}",
+            f"📊 Тренировок: {self.workouts_count}",
+            ""
+        ]
+        
+        for i, workout in enumerate(self.workouts, 1):
+            lines.extend([
+                f"🏆 Тренировка {i}",
+                f"📝 {workout.description}",
+                f"💪 Упражнений: {len(workout.exercises)}",
+                ""
+            ])
+            
+            for j, exercise in enumerate(workout.exercises, 1):
+                lines.extend([
+                    f"  🎯 {j}. {exercise.name}",
+                    f"  📖 {exercise.description}",
+                    f"  🔄 {exercise.repetitions} повторений",
+                    f"  ⚖️ {exercise.weight} кг",
+                    ""
+                ])
+        
+        return "\n".join(lines)

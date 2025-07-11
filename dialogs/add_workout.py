@@ -6,8 +6,8 @@ TODO:
 - Внести сохранение новых тренировок в базу данных
 - Использование pydentic для сущности тренировки
 """
-import re
 
+from typing import Optional
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -23,14 +23,22 @@ router = Router()
 #     сlient = session.query(Client).filter(Client.name == client_name).first()
 #     return bool(client)
 
-def generate_workouts_result_msg(data: dict):
-    client = Client(**data)
-    result = f"Вы добавили следующие тренировки:\n👨🏼 Имя клиента: {client.client_name}\nКоличество тренировок: {client.workouts_count}\n"
-    for i, workout in enumerate(client.workouts):
-        result += f"🏆 Тренировка {i + 1}\nОписание: {workout.description}\nКоличество упражнений: {len(workout.exercises)}\n"
-        for j, exercise in enumerate(workout.exercises):
-            result += f"🎗 Упражнение {j + 1}:\nНазвание: {exercise.name}\nОписание: {exercise.description}\nКоличество подходов: {exercise.repetitions}\nВес: {exercise.weight} кг\n"
-    return result
+def generate_workouts_result_msg(data: dict) -> str:
+    """Генерирует сообщение с результатами добавления тренировок"""
+    try:
+        client = Client(**data)
+        return client.generate_summary()
+    except ValueError as e:
+        return f"❌ Ошибка создания отчета: {e}"
+
+
+@router.message(Command("start"))
+async def start_command(message: types.Message, state: FSMContext):
+    """
+    Обработчик команды /start - очищает состояние и показывает главное меню
+    """
+    await state.clear()
+    await message.answer("Привет! Это бот для управления тренировками.\nИспользуй /add_workouts для добавления тренировок клиенту.")
 
 
 @router.message(Command("add_workouts"))
@@ -38,10 +46,10 @@ async def add_workouts(message: types.Message, state: FSMContext):
     """
     Стартовое состояние
     """
+    await state.clear()
     await message.answer("Привет! Сейчас я помогу добавить тренировки для клиента.\nЕсли передумаешь в процессе, то нажми /cancel")
     await state.set_state(AddWorkoutStates.client_name)
     await message.answer("Введи имя клиента")
-    await state.set_state(AddWorkoutStates.client_name)
 
 
 @router.message(AddWorkoutStates.client_name)
@@ -49,9 +57,8 @@ async def set_client_name(message: types.Message, state: FSMContext):
     """
     Получение имени клиента
     """
-    client_name = message.text.strip()
     try:
-        client_data = Client(client_name=client_name, workouts_count=0, workouts=[])
+        client_data = Client(client_name=message.text, workouts_count=1, workouts=[])
     except ValueError as e:
         await message.answer(str(e))
         return
@@ -68,16 +75,12 @@ async def set_workouts_count(message: types.Message, state: FSMContext):
     """
     Ввод количества тренировок
     """
-    # Проверка нужна здесь, чтобы пользователь получил понятное сообщение,
-    # если введёт не число. В pydantic-моделях такая проверка не требуется,
-    # так как pydantic сам выбросит ошибку при попытке создать объект с неверным типом.
-    if not message.text.isdigit():
-        await message.answer("Количество тренировок должно быть числом")
-        return
-
-    workouts_count = int(message.text)
-    if workouts_count < 1:
-        await message.answer("Количество тренировок должно быть больше 0")
+    try:
+        workouts_count = int(message.text)
+        if workouts_count < 1 or workouts_count > 100:
+            raise ValueError("Количество тренировок должно быть от 1 до 100")
+    except ValueError:
+        await message.answer("Количество тренировок может быть только числом")
         return
 
     await state.update_data(workouts_count=workouts_count, workouts=[])
@@ -90,16 +93,15 @@ async def set_workout_description(message: types.Message, state: FSMContext):
     """
     Ввод описания тренировки
     """
-    workout_description = message.text.strip()
-
-    data = await state.get_data()
-    workouts = data.get("workouts", [])
     try:
-        workout = Workout(description=workout_description, exercises=[])
+        workout = Workout(description=message.text, exercises=[])
     except ValueError as e:
         await message.answer(str(e))
         return
-    workouts.append(workout.dict())
+
+    data = await state.get_data()
+    workouts = data.get("workouts", [])
+    workouts.append(workout.model_dump())
     await state.update_data(workouts=workouts)
     await message.answer("Введи количество упражнений в тренировке")
     await state.set_state(AddWorkoutStates.exercises_count)
@@ -107,15 +109,12 @@ async def set_workout_description(message: types.Message, state: FSMContext):
 
 @router.message(AddWorkoutStates.exercises_count)
 async def set_exercise_count(message: types.Message, state: FSMContext):
-    # Аналогично, эта проверка нужна для пользовательского ввода,
-    # чтобы не показывать "сырые" ошибки pydantic.
-    if not message.text.isdigit():
-        await message.answer("Количество упражнений должно быть числом")
-        return
-
-    exercise_count = int(message.text)
-    if exercise_count < 1:
-        await message.answer("Количество упражнений должно быть больше 0")
+    try:
+        exercise_count = int(message.text)
+        if exercise_count < 1 or exercise_count > 20:
+            raise ValueError("Количество упражнений должно быть от 1 до 20")
+    except ValueError:
+        await message.answer("Количество упражнений может быть только числом")
         return
 
     data = await state.get_data()
@@ -128,93 +127,146 @@ async def set_exercise_count(message: types.Message, state: FSMContext):
 
 @router.message(AddWorkoutStates.exercise_name)
 async def set_exercise_name(message: types.Message, state: FSMContext):
-    exercise_name = message.text.strip()
     data = await state.get_data()
     workouts = data["workouts"]
-    exercises = workouts[-1].get("exercises", [])
-    # временно добавляем пустые поля, заполним далее
-    exercises.append({'name': exercise_name, 'description': '', 'repetitions': 1, 'weight': 0.0})
-    workouts[-1]["exercises"] = exercises
-    await state.update_data(workouts=workouts)
+    
+    # Сохраняем временные данные для создания Exercise
+    await state.update_data(temp_exercise_name=message.text.strip())
     await message.answer("Введи описание упражнения")
     await state.set_state(AddWorkoutStates.exercise_description)
 
 
 @router.message(AddWorkoutStates.exercise_description)
 async def set_exercise_description(message: types.Message, state: FSMContext):
-    exercise_description = message.text.strip()
-    if not exercise_description:
-        await message.answer("Описание упражнения не может быть пустым")
-        return
-
-    data = await state.get_data()
-    workouts = data["workouts"]
-    workouts[-1]["exercises"][-1]["description"] = exercise_description
-    await state.update_data(workouts=workouts)
+    await state.update_data(temp_exercise_description=message.text.strip())
     await message.answer("Введи количество повторений")
     await state.set_state(AddWorkoutStates.repetitions)
 
 
 @router.message(AddWorkoutStates.repetitions)
 async def set_repetitions(message: types.Message, state: FSMContext):
-    # Проверка пользовательского ввода для повторений
-    if not message.text.isdigit():
-        await message.answer("Количество повторений должно быть числом")
+    try:
+        repetitions = int(message.text)
+        if repetitions < 1 or repetitions > 999:
+            raise ValueError("Количество повторений должно быть от 1 до 999")
+    except ValueError:
+        await message.answer("Количество повторений может быть только числом")
         return
 
-    repetitions = int(message.text)
-    if repetitions < 1:
-        await message.answer("Количество повторений должно быть больше 0")
-        return
-
-    data = await state.get_data()
-    workouts = data["workouts"]
-    workouts[-1]["exercises"][-1]["repetitions"] = repetitions
-    await state.update_data(workouts=workouts)
+    await state.update_data(temp_exercise_repetitions=repetitions)
     await message.answer("Введи вес упражнения")
     await state.set_state(AddWorkoutStates.weight)
 
 
-@router.message(AddWorkoutStates.weight)
-async def set_weight(message: types.Message, state: FSMContext):
-    # Здесь используем try/except для float, чтобы обработать ошибку преобразования
+# Вспомогательные функции для set_weight
+async def _validate_weight(text: str) -> Optional[int]:
+    """Валидирует вес"""
     try:
-        weight = float(message.text)
+        weight = int(text)
+        return weight if 0 <= weight <= 1000 else None
     except ValueError:
-        await message.answer("Вес упражнения должен быть числом")
-        return
-    if weight < 0:
-        await message.answer("Вес упражнения не может быть отрицательным")
-        return
+        return None
 
+async def _create_exercise_from_state(state: FSMContext, weight: int) -> Optional[Exercise]:
+    """Создает упражнение из данных состояния"""
+    try:
+        data = await state.get_data()
+        return Exercise(
+            name=data["temp_exercise_name"],
+            description=data["temp_exercise_description"],
+            repetitions=data["temp_exercise_repetitions"],
+            weight=weight
+        )
+    except (ValueError, KeyError):
+        return None
+
+async def _add_exercise_and_update_counters(state: FSMContext, exercise: Exercise) -> None:
+    """Добавляет упражнение и обновляет счетчики"""
     data = await state.get_data()
     workouts = data["workouts"]
-    workouts[-1]["exercises"][-1]["weight"] = weight
+    
+    # Добавляем упражнение
+    exercises = workouts[-1].get("exercises", [])
+    exercises.append(exercise.model_dump())
+    workouts[-1]["exercises"] = exercises
+    
+    # Обновляем счетчик
     workouts[-1]["exercises_count"] -= 1
-    exercises_count = workouts[-1]["exercises_count"]
+    
     await state.update_data(workouts=workouts)
 
+async def _clear_temp_data(state: FSMContext) -> None:
+    """Очищает временные данные упражнения"""
+    await state.update_data(
+        temp_exercise_name=None,
+        temp_exercise_description=None,
+        temp_exercise_repetitions=None
+    )
+
+async def _finalize_workout(state: FSMContext) -> None:
+    """Завершает текущую тренировку"""
+    data = await state.get_data()
+    workouts = data["workouts"]
+    workouts[-1].pop("exercises_count", None)
+    
+    current_workouts_count = data["workouts_count"] - 1
+    await state.update_data(
+        workouts=workouts,
+        workouts_count=current_workouts_count
+    )
+
+async def _complete_all_workouts(state: FSMContext, message: types.Message) -> None:
+    """Завершает все тренировки и показывает результат"""
+    data = await state.get_data()
+    await state.update_data(workouts_count=len(data["workouts"]))
+    await message.answer("Все тренировки добавлены")
+    
+    result_msg = generate_workouts_result_msg(await state.get_data())
+    await message.answer(result_msg)
+    await state.clear()
+
+async def _proceed_to_next_step(state: FSMContext, message: types.Message) -> None:
+    """Определяет и выполняет следующий шаг"""
+    data = await state.get_data()
+    workouts = data["workouts"]
+    
+    # Проверяем упражнения
+    exercises_count = workouts[-1]["exercises_count"]
     if exercises_count > 0:
-        await message.answer(f"Осталось добавить упражнений: {exercises_count}. Введи название следующего упражнения")
+        await message.answer(f"Осталось упражнений: {exercises_count}. Введи название следующего")
         await state.set_state(AddWorkoutStates.exercise_name)
+        return
+    
+    # Завершаем тренировку
+    await _finalize_workout(state)
+    
+    # Проверяем тренировки
+    updated_data = await state.get_data()
+    if updated_data["workouts_count"] > 0:
+        await message.answer(f"Осталось тренировок: {updated_data['workouts_count']}. Введи описание следующей")
+        await state.set_state(AddWorkoutStates.workout_description)
     else:
-        # Удаляем временное поле exercises_count
-        workouts[-1].pop("exercises_count", None)
-        await state.update_data(workouts=workouts)
+        await _complete_all_workouts(state, message)
 
-        current_workouts_count = await state.get_value("workouts_count") - 1
-        await state.update_data(workouts_count=current_workouts_count)
-
-        if current_workouts_count > 0:
-            await message.answer(f"Осталось добавить тренировок: {current_workouts_count}. Введи описание следующей тренировки")
-            await state.set_state(AddWorkoutStates.workout_description)
-        else:
-
-            await state.update_data(workouts_count=len(workouts))
-            await message.answer("Все тренировки добавлены")
-            result_msg = generate_workouts_result_msg(await state.get_data())
-            await message.answer(result_msg)
-            await state.clear()
+@router.message(AddWorkoutStates.weight)
+async def set_weight(message: types.Message, state: FSMContext):
+    """Обрабатывает ввод веса упражнения"""
+    # Валидация веса
+    weight = await _validate_weight(message.text)
+    if weight is None:
+        await message.answer("Вес может быть только числом от 0 до 1000")
+        return
+    
+    # Создание упражнения
+    exercise = await _create_exercise_from_state(state, weight)
+    if exercise is None:
+        await message.answer("Ошибка создания упражнения")
+        return
+    
+    # Обновление данных и переход к следующему шагу
+    await _add_exercise_and_update_counters(state, exercise)
+    await _clear_temp_data(state)
+    await _proceed_to_next_step(state, message)
 
 
 @router.message(Command("cancel"))
